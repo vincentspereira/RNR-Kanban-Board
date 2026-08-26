@@ -88,6 +88,40 @@ Supported events: `session_start`, `tool_activity`, `needs_input`,
 `session_end`. Even with **no hooks configured**, the board still works via
 transcript scanning alone (activity-based status inference).
 
+## Feature highlights (v0.2)
+
+- **Stall detection** — In-Progress cards silent for >10 min get a ⏸ "Stalled"
+  badge (`ORCH_STALL_MS` tunable), catching forgotten agents even without hooks.
+- **State persistence** — manual moves & hook-only sessions survive server
+  restarts via a debounced snapshot (`.orchestrator-state.json`, gitignored).
+- **SSE reconnect resync** — the UI re-fetches a full board snapshot after any
+  connection drop, so no state change is ever missed.
+- **Desktop notifications + title badge** — OS notification when any agent
+  enters In Review; browser tab shows `(n)` amber count.
+- **Project tabs & search** — group the board by project directory, filter by
+  title/branch/project substring.
+- **Honest Stop button** — only appears on cards whose terminal process we
+  actually control.
+- **Token usage per card** — input+output token magnitude from transcripts.
+- **Terminal scrollback** — reopening a terminal replays the last 64 KB of
+  output instead of starting blank.
+- **Worktree actions on Done cards** — one-click *Merge branch* into the main
+  worktree and *Prune worktree* from disk (argv-array `git`, ref-name
+  validation, main-worktree protection).
+- **Resolve Grid** — one click summons every attention-needing agent into a
+  balanced Windows Terminal pane grid (WSL paths auto-translated to UNC).
+- **Keyboard accessible** — full keyboard drag & drop (Tab → Space → arrows →
+  Space), ARIA roles/labels throughout.
+- **Hooks setup modal** — header button shows your exact `settings.json` hook
+  config with the real port/token baked in, ready to copy.
+
+## Tests
+
+```bash
+cd server && npm test                # 19 unit tests (state engine, security, parser)
+bash scripts/run-all-tests.sh        # units + HTTP smoke suite + feature checks
+```
+
 ## Security model
 
 This is a **single-user localhost tool**. Hardening included:

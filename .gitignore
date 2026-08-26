@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .orchestrator-token
+.orchestrator-state.json
 *.tsbuildinfo
 *.log
 .DS_Store

@@ -18,7 +18,7 @@ import { discoverTranscriptSessions } from './transcript-parser.js';
 
 export const STATUSES = ['todo', 'in_progress', 'review', 'done'];
 
-class BoardStore extends EventEmitter {
+export class BoardStore extends EventEmitter {
   constructor() {
     super();
     /** @type {Map<string, object>} sessionId -> card */
@@ -84,6 +84,28 @@ class BoardStore extends EventEmitter {
       }
     }
     if (removed) this._scheduleEmit();
+  }
+
+  /**
+   * Stall heartbeat (C1): flag In-Progress cards whose transcript has been
+   * silent for longer than the threshold. This catches agents stuck waiting
+   * even when no hook fired — the "Forgotten Agent Syndrome" tripwire.
+   */
+  flagStalled(thresholdMs) {
+    const now = Date.now();
+    let changed = false;
+    for (const card of this.cards.values()) {
+      const lastSeen = card.fileModifiedAt ?? card.lastActivityAt;
+      const shouldStall =
+        card.status === 'in_progress' &&
+        typeof lastSeen === 'number' &&
+        now - lastSeen > thresholdMs;
+      if (card.stalled !== shouldStall) {
+        card.stalled = shouldStall;
+        changed = true;
+      }
+    }
+    if (changed) this._scheduleEmit();
   }
 
   _scheduleEmit() {
@@ -180,6 +202,8 @@ class BoardStore extends EventEmitter {
               : 'in_progress';
 
       const existing = this.cards.get(id);
+      // Capture authority signal BEFORE upsert mutates the card's source.
+      const wasHookSourced = existing?.source === 'hook';
       this.upsert({
         id,
         title:
@@ -197,7 +221,7 @@ class BoardStore extends EventEmitter {
       });
       // Only move forward to non-review states from CLI evidence when we have
       // no fresher hook-driven signal.
-      if (!existing || existing.source !== 'hook' || mapped === 'done') {
+      if (!wasHookSourced || mapped === 'done') {
         this.setStatus(id, mapped);
       }
     }

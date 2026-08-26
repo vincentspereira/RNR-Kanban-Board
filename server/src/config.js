@@ -36,6 +36,16 @@ export const CONFIG = {
   // considered actively "In Progress".
   activityWindowMs: num(process.env.ORCH_ACTIVITY_MS, 2 * 60_000),
 
+  // Stall detection: In-Progress cards with no transcript writes for this
+  // long are flagged as stalled ("Forgotten Agent Syndrome" tripwire).
+  stallThresholdMs: num(process.env.ORCH_STALL_MS, 10 * 60_000),
+
+  // Bytes read from the START of transcripts when extracting session titles.
+  transcriptHeadBytes: num(process.env.ORCH_HEAD_BYTES, 32 * 1024),
+
+  // Max terminal scrollback (bytes) replayed to newly attached clients.
+  terminalHistoryBytes: num(process.env.ORCH_TERM_HISTORY, 64 * 1024),
+
   // Terminal output batching target: 16ms aligns with 60fps rendering.
   flushIntervalMs: num(process.env.ORCH_FLUSH_MS, 16),
 

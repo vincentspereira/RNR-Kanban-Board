@@ -80,6 +80,7 @@ class PtyManager {
       pending: [],
       flushTimer: null,
       onData: null, // set by websocket bridge
+      history: '', // bounded scrollback replayed to new subscribers (C2)
       proc: null,
       pty: null,
       kill: null,
@@ -181,6 +182,9 @@ class PtyManager {
     if (handle.pending.length === 0) return;
     const blob = handle.pending.join('');
     handle.pending = [];
+    // Append to scrollback history with a hard cap (C2).
+    handle.history =
+      (handle.history + blob).slice(-CONFIG.terminalHistoryBytes);
     handle.onData?.(blob);
   }
 

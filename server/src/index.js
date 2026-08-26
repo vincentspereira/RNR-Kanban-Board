@@ -20,6 +20,9 @@ import { board } from './state-store.js';
 import { hooksRouter } from './hooks.js';
 import { fetchAgentSessions } from './agents-cli.js';
 import { ptyManager, assertValidSessionId } from './pty-manager.js';
+import { schedulePersist, restoreInto } from './persistence.js';
+import { mergeSessionBranch, pruneSessionWorktree } from './worktree.js';
+import { openResolveGrid } from './resolve-grid.js';
 
 const app = express();
 
@@ -59,7 +62,22 @@ api.get('/config', (req, res) => {
 });
 
 api.get('/sessions', (req, res) => {
-  res.json({ sessions: board.all() });
+  res.json({ sessions: decorate(board.all()) });
+});
+
+/**
+ * Ready-to-paste Claude Code hook configuration with the real token and port
+ * embedded (C6) — removes all manual copy/paste error surface.
+ */
+api.get('/hooks-snippet', (req, res) => {
+  const curl = `curl -s -X POST http://127.0.0.1:${CONFIG.port}/hooks/notification -H 'Content-Type: application/json' -H 'x-orchestrator-token: ${TOKEN}' -d '{"event":"needs_input","session_id":"$CLAUDE_SESSION_ID","message":"Agent requires input"}' >/dev/null`;
+  res.json({
+    snippet: {
+      hooks: {
+        Notification: [{ hooks: [{ type: 'command', command: curl }] }],
+      },
+    },
+  });
 });
 
 /** Manual status override (drag & drop on the board). */
@@ -122,9 +140,69 @@ api.post('/sessions/:id/stop', (req, res) => {
 api.post('/refresh', async (req, res) => {
   const cli = await fetchAgentSessions();
   if (cli) board.syncFromCli(cli);
-  const count = board.syncFromTranscripts();
-  res.json({ ok: true, cliSessions: cli ? cli.length : null, transcripts: count });
+  board.syncFromTranscripts();
+  board.flagStalled(CONFIG.stallThresholdMs); // C1
+  board.removeStale(24 * 60 * 60 * 1000); // prune done cards after a day
+  res.json({ ok: true, cliSessions: cli ? cli.length : null });
 });
+
+/** B1: merge this session's finished branch into the main worktree. */
+api.post('/sessions/:id/worktree/merge', async (req, res) => {
+  try {
+    const id = assertValidSessionId(req.params.id);
+    const card = board.get(id);
+    if (!card) {
+      res.status(404).json({ error: 'Unknown session' });
+      return;
+    }
+    const result = await mergeSessionBranch(card);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(400).json({ error: String(err.message || err).slice(0, 500) });
+  }
+});
+
+/** B1: prune the worktree this session ran in (Done-card cleanup). */
+api.post('/sessions/:id/worktree/prune', async (req, res) => {
+  try {
+    const id = assertValidSessionId(req.params.id);
+    const card = board.get(id);
+    if (!card) {
+      res.status(404).json({ error: 'Unknown session' });
+      return;
+    }
+    const result = await pruneSessionWorktree(card, { force: req.body?.force === true });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ error: String(err.message || err).slice(0, 500) });
+  }
+});
+
+/** B2: summon all attention-needing agents into a native terminal grid. */
+api.post('/resolve-grid', async (req, res) => {
+  try {
+    const needing = board.all().filter((c) => c.status === 'review');
+    const summary = await openResolveGrid(needing);
+    res.json({ ok: true, summary });
+  } catch (err) {
+    res.status(400).json({ error: String(err.message || err).slice(0, 300) });
+  }
+});
+
+/**
+ * Manual + periodic reconciliation entrypoint (also used by the poll loop).
+ */
+async function reconcile() {
+  try {
+    const cli = await fetchAgentSessions();
+    if (cli) board.syncFromCli(cli);
+    board.syncFromTranscripts();
+    board.flagStalled(CONFIG.stallThresholdMs); // C1
+    board.removeStale(24 * 60 * 60 * 1000); // prune done cards after a day
+  } catch (err) {
+    console.error('[reconcile]', err.message);
+  }
+}
 
 app.use('/api', api);
 app.use(hooksRouter);
@@ -132,8 +210,13 @@ app.use(hooksRouter);
 // --- Server-Sent Events: live board state -----------------------------------
 const sseClients = new Set();
 
+/** Augment cards with live runtime flags before they leave the server (A3). */
+const decorate = (cards) =>
+  cards.map((c) => ({ ...c, terminalActive: ptyManager.has(c.id) }));
+
 board.on('change', (sessions) => {
-  const frame = `event: board\ndata: ${JSON.stringify({ sessions })}\n\n`;
+  const frame = `event: board\ndata: ${JSON.stringify({ sessions: decorate(sessions) })}\n\n`;
+  schedulePersist(sessions); // A2: debounced state snapshot
   for (const client of sseClients) {
     try {
       client.write(frame);
@@ -227,6 +310,11 @@ wss.on('connection', (ws, req, sessionId) => {
     return;
   }
 
+  // C2: replay bounded scrollback so reopened terminals aren't blank.
+  if (handle.history && ws.readyState === ws.OPEN) {
+    ws.send(handle.history);
+  }
+
   ws.on('message', (data) => {
     // Control frames are tiny JSON; data frames are raw keystrokes.
     const text = typeof data === 'string' ? data : data.toString('utf8');
@@ -252,16 +340,7 @@ wss.on('connection', (ws, req, sessionId) => {
 });
 
 // --- Background reconciliation loop ------------------------------------------
-async function reconcile() {
-  try {
-    const cli = await fetchAgentSessions();
-    if (cli) board.syncFromCli(cli);
-    board.syncFromTranscripts();
-    board.removeStale(24 * 60 * 60 * 1000); // prune done cards after a day
-  } catch (err) {
-    console.error('[reconcile]', err.message);
-  }
-}
+// (defined above, before app.use; single authoritative implementation)
 
 // --- Startup / shutdown --------------------------------------------------------
 server.listen(CONFIG.port, CONFIG.host, () => {
@@ -297,6 +376,11 @@ server.listen(CONFIG.port, CONFIG.host, () => {
       .join('\n'),
   );
   console.log(`\n  Shared token stored at: ${path.join(PROJECT_ROOT, '.orchestrator-token')}`);
+
+  // A2: restore hook-created / manually-moved cards from the last snapshot
+  // BEFORE rehydration so live transcript data can enrich (not clobber) them.
+  const restored = restoreInto(board);
+  if (restored > 0) console.log(`  Restored ${restored} card(s) from previous session state.`);
 
   // Initial state rehydration, then periodic reconciliation.
   reconcile();

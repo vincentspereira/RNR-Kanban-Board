@@ -1,4 +1,4 @@
-import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import type { SessionCard, Status } from '../types';
 import { setStatus } from '../api';
 import Column from './Column';
@@ -16,7 +16,12 @@ const COLUMNS: { key: Status; label: string; accent: string }[] = [
 ];
 
 export default function Board({ byStatus, onOpenTerminal }: Props) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // C4: KeyboardSensor enables full keyboard drag & drop (Tab to card,
+  // Space/Enter to lift, arrows to choose column, Space/Enter to drop).
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const handleDragEnd = (event: DragEndEvent) => {
     const id = event.active.id as string;

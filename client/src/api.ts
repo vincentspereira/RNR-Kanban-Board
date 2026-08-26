@@ -37,6 +37,22 @@ export function fetchSessions(): Promise<{ sessions: SessionCard[] }> {
   return fetch('/api/sessions').then((r) => r.json());
 }
 
+export function getHooksSnippet(): Promise<{ snippet: unknown }> {
+  return fetch('/api/hooks-snippet').then((r) => r.json());
+}
+
+export function mergeWorktree(id: string) {
+  return post(`/api/sessions/${encodeURIComponent(id)}/worktree/merge`);
+}
+
+export function pruneWorktree(id: string) {
+  return post(`/api/sessions/${encodeURIComponent(id)}/worktree/prune`, { force: false });
+}
+
+export function resolveGrid() {
+  return post<{ ok: boolean; summary?: string }>('/api/resolve-grid');
+}
+
 export function setStatus(id: string, status: Status) {
   return post(`/api/sessions/${encodeURIComponent(id)}/status`, { status });
 }
@@ -71,6 +87,8 @@ export async function openTerminal(
 
 /**
  * Subscribe to live board state via Server-Sent Events.
+ * On reconnect after a drop we re-fetch a full snapshot so no state change
+ * that happened during the outage is missed (A1).
  * Returns an unsubscribe function.
  */
 export function subscribeToBoard(
@@ -78,8 +96,20 @@ export function subscribeToBoard(
   onConnectionChange?: (connected: boolean) => void,
 ): () => void {
   const es = new EventSource('/api/events');
+  let dropped = false;
 
-  es.addEventListener('hello', () => onConnectionChange?.(true));
+  const resync = () => {
+    if (!dropped) return;
+    dropped = false;
+    fetchSessions()
+      .then((r) => onSessions(r.sessions ?? []))
+      .catch(() => undefined);
+  };
+
+  es.addEventListener('hello', () => {
+    onConnectionChange?.(true);
+    resync();
+  });
   es.addEventListener('board', (ev) => {
     try {
       const data = JSON.parse((ev as MessageEvent).data);
@@ -88,8 +118,14 @@ export function subscribeToBoard(
       /* malformed frame — ignore */
     }
   });
-  es.onopen = () => onConnectionChange?.(true);
-  es.onerror = () => onConnectionChange?.(false);
+  es.onopen = () => {
+    onConnectionChange?.(true);
+    resync();
+  };
+  es.onerror = () => {
+    dropped = true;
+    onConnectionChange?.(false);
+  };
 
   return () => es.close();
 }

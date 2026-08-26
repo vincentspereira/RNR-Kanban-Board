@@ -15,8 +15,10 @@ export default function Column({ status, label, accent, cards, onOpenTerminal }:
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
   return (
-    <div
+    <section
       ref={setNodeRef}
+      role="region"
+      aria-label={`${label} column, ${cards.length} cards`}
       className={`flex min-h-0 flex-col rounded-xl border bg-zinc-900/60 ${
         isOver ? 'border-sky-600' : 'border-zinc-800'
       }`}
@@ -41,6 +43,6 @@ export default function Column({ status, label, accent, cards, onOpenTerminal }:
           <p className="px-1 py-6 text-center text-xs text-zinc-600">No sessions</p>
         )}
       </div>
-    </div>
+    </section>
   );
 }

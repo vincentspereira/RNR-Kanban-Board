@@ -9,6 +9,9 @@ export interface SessionCard {
   status: Status;
   needsInputReason?: string | null;
   toolUseCount?: number;
+  totalTokens?: number;
+  stalled?: boolean;
+  terminalActive?: boolean;
   startedAt?: number;
   fileModifiedAt?: number;
   lastActivityAt?: number;
