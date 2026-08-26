@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+@import '@xterm/xterm/css/xterm.css';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
